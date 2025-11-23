@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { AVAILABLE_VOICES, SAMPLE_TEXTS } from './constants';
 import { VoiceName, SupportedLanguage, HistoryItem } from './types';
-import { generateSpeech, refineTextWithAI, translateText, hasApiKey } from './services/geminiService';
+import { generateSpeech, refineTextWithAI, translateText, hasApiKey, reloadKeys } from './services/geminiService';
 import { bufferToWav, audioBufferToBlob } from './services/audioUtils';
 import VoiceSelector from './components/VoiceSelector';
 import Visualizer from './components/Visualizer';
@@ -28,6 +28,9 @@ export default function App() {
   const [showQuotaModal, setShowQuotaModal] = useState(false);
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [currentBuffer, setCurrentBuffer] = useState<AudioBuffer | null>(null);
+
+  // Backup Keys State
+  const [backupKeysInput, setBackupKeysInput] = useState('');
 
   // Audio References
   const audioContextRef = useRef<AudioContext | null>(null);
@@ -247,11 +250,11 @@ export default function App() {
       // Handle Rate Limits (429) & Quota Exhaustion
       if (
         errorMessage.includes("RESOURCE_EXHAUSTED") || 
-        errorMessage.includes("Quota exceeded")
+        errorMessage.includes("Quota exceeded") || 
+        errorMessage.includes("429") ||
+        errorMessage.includes("exhausted")
       ) {
          setShowQuotaModal(true); // Show the upgrade modal
-      } else if (errorMessage.includes("429")) {
-         setError("⚠️ Rate Limit: Please wait 30s before retrying.");
       } else if (errorMessage === "API_KEY_MISSING") {
         setIsConfigError(true);
         setError("Missing API Key. Configuration Required.");
@@ -306,6 +309,17 @@ export default function App() {
     }
   };
 
+  const saveBackupKeys = () => {
+    if (backupKeysInput.trim()) {
+      localStorage.setItem('voicefy_backup_keys', backupKeysInput.trim());
+      reloadKeys(); // Reload the service
+      setShowQuotaModal(false);
+      setBackupKeysInput('');
+      // Retry generation automatically? No, let user click.
+      alert("Backup keys saved! You can try generating again.");
+    }
+  };
+
   return (
     <div className="min-h-screen bg-[#020617] text-white p-4 md:p-8 overflow-hidden font-sans selection:bg-purple-500/30">
       
@@ -318,10 +332,10 @@ export default function App() {
          <div className="absolute bottom-[20%] left-[20%] w-[400px] h-[400px] bg-blue-600/10 rounded-full blur-[80px]" style={{ animationDelay: '1s' }}></div>
       </div>
 
-      {/* Quota Exhaustion Modal */}
+      {/* Quota Exhaustion / Unlimited Mode Modal */}
       {showQuotaModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
-          <div className="bg-[#1a1b26] border border-pink-500/50 rounded-2xl max-w-md w-full p-6 shadow-2xl relative animate-scale-in">
+          <div className="bg-[#1a1b26] border border-pink-500/50 rounded-2xl max-w-lg w-full p-6 shadow-2xl relative animate-scale-in">
              <button onClick={() => setShowQuotaModal(false)} className="absolute top-4 right-4 text-gray-400 hover:text-white">
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
              </button>
@@ -329,32 +343,47 @@ export default function App() {
                <div className="w-16 h-16 bg-gradient-to-br from-pink-500 to-indigo-600 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg shadow-pink-500/30">
                  <svg className="w-8 h-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
                </div>
-               <h2 className="text-xl font-bold text-white mb-2">Daily Quota Reached</h2>
+               <h2 className="text-xl font-bold text-white mb-2">Unlock Unlimited Generations</h2>
                <p className="text-sm text-gray-300">
-                 You have hit the daily limit for the Free Tier (approx 15 generations). 
-                 The "Unlimited" capability is restricted by your API Plan.
+                 You have hit the Gemini Free Tier limit. You can bypass this by adding backup keys or upgrading.
                </p>
              </div>
              
-             <div className="space-y-3">
-               <a 
-                 href="https://aistudio.google.com/app/billing" 
-                 target="_blank" 
-                 rel="noreferrer"
-                 className="block w-full py-3 bg-white text-black font-bold text-center rounded-xl hover:bg-gray-200 transition-colors shadow-lg"
-               >
-                 Upgrade to Unlimited (Pay-as-you-go)
-               </a>
-               <button 
-                 onClick={() => setShowQuotaModal(false)}
-                 className="block w-full py-3 bg-white/5 text-gray-300 font-medium text-center rounded-xl hover:bg-white/10 transition-colors border border-white/5"
-               >
-                 Wait until tomorrow
-               </button>
+             <div className="space-y-4">
+               {/* Option 1: Add Keys */}
+               <div className="bg-black/30 p-4 rounded-xl border border-white/5">
+                 <label className="text-xs font-bold text-gray-400 uppercase block mb-2">Add Backup Keys (Free Method)</label>
+                 <textarea 
+                   value={backupKeysInput}
+                   onChange={(e) => setBackupKeysInput(e.target.value)}
+                   placeholder="Paste keys here separated by commas (e.g., AIza..., AIza...)"
+                   className="w-full bg-black/50 border border-white/10 rounded-lg p-3 text-xs text-white placeholder-gray-600 focus:border-indigo-500 outline-none h-20 mb-3"
+                 />
+                 <button 
+                   onClick={saveBackupKeys}
+                   disabled={!backupKeysInput.trim()}
+                   className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-bold rounded-lg transition-colors disabled:opacity-50"
+                 >
+                   Save Keys & Continue
+                 </button>
+                 <p className="text-[10px] text-gray-500 mt-2 text-center">
+                   Keys are stored locally in your browser and used to rotate quota.
+                 </p>
+               </div>
+
+               {/* Option 2: Pay */}
+               <div className="text-center">
+                 <p className="text-xs text-gray-400 mb-2">OR</p>
+                 <a 
+                   href="https://aistudio.google.com/app/billing" 
+                   target="_blank" 
+                   rel="noreferrer"
+                   className="block w-full py-3 bg-white text-black font-bold text-center rounded-xl hover:bg-gray-200 transition-colors shadow-lg text-sm"
+                 >
+                   Upgrade to Pay-As-You-Go
+                 </a>
+               </div>
              </div>
-             <p className="mt-4 text-xs text-center text-gray-500">
-               Tip: Replaying audio from your "Recent Generations" list is free and unlimited!
-             </p>
           </div>
         </div>
       )}

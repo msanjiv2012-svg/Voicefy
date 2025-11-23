@@ -2,31 +2,115 @@ import { GoogleGenAI, Modality } from "@google/genai";
 import { VoiceName, SupportedLanguage } from "../types";
 import { decodeBase64, decodeAudioData } from "./audioUtils";
 
-// Helper to get the AI client instance lazily
-let ai: GoogleGenAI | null = null;
+// --- KEY MANAGEMENT SYSTEM ---
 
-function getAI(): GoogleGenAI {
-  if (!ai) {
-    const apiKey = process.env.API_KEY;
-    // Initialize with provided key or empty string to prevent constructor crash
-    ai = new GoogleGenAI({ apiKey: apiKey || '' });
-  }
-  return ai;
+let keyList: string[] = [];
+let currentKeyIndex = 0;
+let aiClientCache: Map<string, GoogleGenAI> = new Map();
+
+/**
+ * Initializes the key list from Environment Variables and LocalStorage.
+ * Prioritizes Environment variables, then appends user-provided local keys.
+ */
+function initializeKeys() {
+  const envKeysString = process.env.API_KEY || '';
+  const localKeysString = typeof window !== 'undefined' ? localStorage.getItem('voicefy_backup_keys') : '';
+
+  const envKeys = envKeysString.split(',').map(k => k.trim()).filter(k => k && k !== 'undefined');
+  const localKeys = (localKeysString || '').split(',').map(k => k.trim()).filter(k => k);
+
+  // Combine and deduplicate
+  keyList = [...new Set([...envKeys, ...localKeys])];
+  console.log(`[Voicefy] Loaded ${keyList.length} API keys for rotation.`);
 }
 
-function checkApiKey() {
-  const key = process.env.API_KEY;
-  if (!key || key.length === 0 || key === 'undefined') {
+/**
+ * Reloads keys (call this after user updates keys in UI)
+ */
+export function reloadKeys() {
+  aiClientCache.clear();
+  currentKeyIndex = 0;
+  initializeKeys();
+}
+
+/**
+ * Gets the current active GoogleGenAI client instance.
+ */
+function getCurrentClient(): GoogleGenAI {
+  if (keyList.length === 0) initializeKeys();
+  
+  if (keyList.length === 0) {
     const error = new Error("API_KEY_MISSING");
     error.name = "ConfigError";
     throw error;
   }
+
+  const currentKey = keyList[currentKeyIndex];
+  
+  if (!aiClientCache.has(currentKey)) {
+    aiClientCache.set(currentKey, new GoogleGenAI({ apiKey: currentKey }));
+  }
+
+  return aiClientCache.get(currentKey)!;
+}
+
+/**
+ * Rotates to the next available API key.
+ * Returns true if rotation was successful (there was another key).
+ * Returns false if we have looped through all keys and they are all likely exhausted.
+ */
+function rotateKey(): boolean {
+  if (keyList.length <= 1) return false;
+
+  currentKeyIndex = (currentKeyIndex + 1) % keyList.length;
+  console.warn(`[Voicefy] Switched to API Key #${currentKeyIndex + 1}`);
+  return true;
 }
 
 export function hasApiKey(): boolean {
-  const key = process.env.API_KEY;
-  return !!(key && key.length > 0 && key !== 'undefined');
+  if (keyList.length === 0) initializeKeys();
+  return keyList.length > 0;
 }
+
+// --- HELPER: Execute with Rotation ---
+
+/**
+ * Wraps an API call with automatic retry logic using key rotation.
+ */
+async function executeWithRetry<T>(operation: (client: GoogleGenAI) => Promise<T>): Promise<T> {
+  const startKeyIndex = currentKeyIndex;
+  let attempts = 0;
+  // Limit retries to number of keys to prevent infinite loops, plus one generic retry
+  const maxAttempts = Math.max(keyList.length, 1) + 1; 
+
+  while (attempts < maxAttempts) {
+    try {
+      const client = getCurrentClient();
+      return await operation(client);
+    } catch (error: any) {
+      const msg = error.message || '';
+      const isQuotaError = msg.includes("429") || msg.includes("RESOURCE_EXHAUSTED") || msg.includes("Quota exceeded");
+      
+      if (isQuotaError) {
+        console.warn(`[Voicefy] Quota hit on Key #${currentKeyIndex + 1}. Attempting rotation...`);
+        const rotated = rotateKey();
+        
+        // If we rotated back to the start, we are truly out of quota on all keys
+        if (!rotated || currentKeyIndex === startKeyIndex) {
+           throw error; // Re-throw the original error to show the modal
+        }
+        // If rotated successfully, loop continues and retries with new key
+      } else {
+        throw error; // Not a quota error, just fail
+      }
+    }
+    attempts++;
+  }
+  throw new Error("All API keys exhausted.");
+}
+
+
+// --- VOICE CONFIGURATION ---
 
 // API Base Voice Names
 const API_VOICES = {
@@ -207,63 +291,63 @@ export async function generateSpeech(
   speed: number = 1.0,
   highQuality: boolean = true
 ): Promise<AudioBuffer> {
-  checkApiKey();
   
-  const client = getAI();
-  const config = VOICE_CONFIG_MAP[voiceName];
-  const voiceConfig = config || { apiVoice: API_VOICES.PUCK, style: 'Neutral' };
+  return executeWithRetry(async (client) => {
+    const config = VOICE_CONFIG_MAP[voiceName];
+    const voiceConfig = config || { apiVoice: API_VOICES.PUCK, style: 'Neutral' };
 
-  const promptText = `
-    Say the following text: "${text}"
-    
-    Style instructions: ${voiceConfig.style}
-    Language: ${language}
-  `;
+    const promptText = `
+      Say the following text: "${text}"
+      
+      Style instructions: ${voiceConfig.style}
+      Language: ${language}
+    `;
 
-  const response = await client.models.generateContent({
-    model: 'gemini-2.5-flash-preview-tts',
-    contents: [{ parts: [{ text: promptText }] }],
-    config: {
-      responseModalities: [Modality.AUDIO],
-      speechConfig: {
-        voiceConfig: {
-          prebuiltVoiceConfig: { voiceName: voiceConfig.apiVoice },
+    const response = await client.models.generateContent({
+      model: 'gemini-2.5-flash-preview-tts',
+      contents: [{ parts: [{ text: promptText }] }],
+      config: {
+        responseModalities: [Modality.AUDIO],
+        speechConfig: {
+          voiceConfig: {
+            prebuiltVoiceConfig: { voiceName: voiceConfig.apiVoice },
+          },
         },
       },
-    },
+    });
+
+    const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+
+    if (!base64Audio) {
+      throw new Error("No audio generated from Gemini.");
+    }
+
+    const audioBytes = decodeBase64(base64Audio);
+    return await decodeAudioData(audioBytes, audioContext);
   });
-
-  const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
-
-  if (!base64Audio) {
-    throw new Error("No audio generated from Gemini. Check your API Key and quota.");
-  }
-
-  const audioBytes = decodeBase64(base64Audio);
-  return await decodeAudioData(audioBytes, audioContext);
 }
 
 export async function refineTextWithAI(text: string, voiceName: VoiceName): Promise<string> {
-  checkApiKey();
-  const client = getAI();
-  const config = VOICE_CONFIG_MAP[voiceName];
-  const style = config ? config.style : "Clear and professional";
-  
-  const response = await client.models.generateContent({
-    model: 'gemini-2.5-flash',
-    contents: `Rewrite the following text to match this style description: "${style}". Keep the meaning the same but enhance the tone. Text: "${text}"`,
+  return executeWithRetry(async (client) => {
+    const config = VOICE_CONFIG_MAP[voiceName];
+    const style = config ? config.style : "Clear and professional";
+    
+    const response = await client.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: `Rewrite the following text to match this style description: "${style}". Keep the meaning the same but enhance the tone. Text: "${text}"`,
+    });
+    
+    return response.text || text;
   });
-  
-  return response.text || text;
 }
 
 export async function translateText(text: string, targetLanguage: SupportedLanguage): Promise<string> {
-  checkApiKey();
-  const client = getAI();
-  const response = await client.models.generateContent({
-    model: 'gemini-2.5-flash',
-    contents: `Translate the following text to ${targetLanguage}. Return only the translated text. Text: "${text}"`,
+  return executeWithRetry(async (client) => {
+    const response = await client.models.generateContent({
+      model: 'gemini-2.5-flash',
+      contents: `Translate the following text to ${targetLanguage}. Return only the translated text. Text: "${text}"`,
+    });
+    
+    return response.text || text;
   });
-  
-  return response.text || text;
 }
