@@ -200,15 +200,39 @@ export default function App() {
 
     } catch (err: any) {
       console.error("Generation failed:", err);
-      // Show a user-friendly error
-      if (err.message === "API_KEY_MISSING") {
+      
+      let errorMessage = err.message || "An unexpected error occurred.";
+      
+      // Attempt to parse JSON error message if it comes in raw format
+      if (typeof errorMessage === 'string' && (errorMessage.startsWith('{') || errorMessage.includes('error'))) {
+        try {
+            // Sometimes the error message is a stringified JSON
+            const parsed = JSON.parse(errorMessage);
+            if (parsed.error && parsed.error.message) {
+                errorMessage = parsed.error.message;
+            } else if (parsed.message) {
+                errorMessage = parsed.message;
+            }
+        } catch (e) {
+            // if parsing fails, just use the string as is, or try to regex the status
+        }
+      }
+
+      // Handle Rate Limits (429)
+      if (
+        errorMessage.includes("429") || 
+        errorMessage.includes("RESOURCE_EXHAUSTED") || 
+        errorMessage.includes("Quota exceeded")
+      ) {
+         setError("⚠️ Rate Limit Exceeded: You are creating audio too fast. Please wait 30-60 seconds before trying again.");
+      } else if (errorMessage === "API_KEY_MISSING") {
         setIsConfigError(true);
         setError("Missing API Key. Configuration Required.");
-      } else if (err.message?.includes("API Key")) {
+      } else if (errorMessage.includes("API Key") || errorMessage.includes("403")) {
         setIsConfigError(true);
-        setError("Invalid API Key. Please check your quota or key.");
+        setError("Invalid API Key. Please check your quota or key settings.");
       } else {
-        setError(err.message || "An unexpected error occurred. Please try again.");
+        setError(errorMessage);
       }
     } finally {
       setIsLoading(false);
@@ -341,13 +365,13 @@ export default function App() {
 
           {/* General Error Display */}
           {error && !isConfigError && (
-             <div className="bg-red-500/10 border border-red-500/50 rounded-xl p-4 flex items-start space-x-3 animate-fade-in">
+             <div className="bg-red-500/10 border border-red-500/50 rounded-xl p-4 flex items-start space-x-3 animate-fade-in shadow-lg shadow-red-900/10">
                 <svg className="w-5 h-5 text-red-400 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
-                <div className="text-sm text-red-200">
+                <div className="text-sm text-red-100">
                    <span className="font-bold block mb-1">Error</span>
                    {error}
                 </div>
-                <button onClick={() => setError(null)} className="text-red-400 hover:text-white ml-auto">
+                <button onClick={() => setError(null)} className="text-red-400 hover:text-white ml-auto p-1 bg-red-500/10 rounded-md hover:bg-red-500/30">
                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
                 </button>
              </div>
