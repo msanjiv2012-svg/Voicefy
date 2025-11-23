@@ -177,6 +177,7 @@ export interface HistoryItem {
   text: string;
   language: string;
   voice: VoiceName;
+  speed: number;
   timestamp: number;
   audioBuffer: AudioBuffer | null; 
 }

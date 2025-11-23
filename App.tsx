@@ -25,6 +25,7 @@ export default function App() {
   const [isPlaying, setIsPlaying] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isConfigError, setIsConfigError] = useState(false);
+  const [showQuotaModal, setShowQuotaModal] = useState(false);
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [currentBuffer, setCurrentBuffer] = useState<AudioBuffer | null>(null);
 
@@ -164,9 +165,34 @@ export default function App() {
     setIsLoading(true);
     setError(null);
     setIsConfigError(false);
+    setShowQuotaModal(false);
     stopAudio();
     setCurrentBuffer(null);
 
+    // 1. CACHE CHECK: Check history for identical request to save quota
+    const cachedItem = history.find(item => 
+      item.text === text && 
+      item.voice === selectedVoice && 
+      item.language === language &&
+      item.audioBuffer !== null &&
+      // Check if speed is effectively the same (tolerance for float)
+      Math.abs(item.speed - speed) < 0.1 
+    );
+
+    if (cachedItem && cachedItem.audioBuffer) {
+      console.log("Using cached audio - 0 Quota used");
+      setCurrentBuffer(cachedItem.audioBuffer);
+      // Move to top of history
+      setHistory(prev => [
+        cachedItem, 
+        ...prev.filter(i => i.id !== cachedItem.id)
+      ]);
+      playAudio(cachedItem.audioBuffer);
+      setIsLoading(false);
+      return;
+    }
+
+    // 2. API REQUEST
     try {
       if (audioContextRef.current?.state === 'suspended') {
         await audioContextRef.current.resume();
@@ -191,6 +217,7 @@ export default function App() {
         text: text,
         language: language,
         voice: selectedVoice,
+        speed: speed,
         timestamp: Date.now(),
         audioBuffer: audioBuffer,
       };
@@ -206,7 +233,6 @@ export default function App() {
       // Attempt to parse JSON error message if it comes in raw format
       if (typeof errorMessage === 'string' && (errorMessage.startsWith('{') || errorMessage.includes('error'))) {
         try {
-            // Sometimes the error message is a stringified JSON
             const parsed = JSON.parse(errorMessage);
             if (parsed.error && parsed.error.message) {
                 errorMessage = parsed.error.message;
@@ -214,17 +240,18 @@ export default function App() {
                 errorMessage = parsed.message;
             }
         } catch (e) {
-            // if parsing fails, just use the string as is, or try to regex the status
+            // parsing failed, use original string
         }
       }
 
-      // Handle Rate Limits (429)
+      // Handle Rate Limits (429) & Quota Exhaustion
       if (
-        errorMessage.includes("429") || 
         errorMessage.includes("RESOURCE_EXHAUSTED") || 
         errorMessage.includes("Quota exceeded")
       ) {
-         setError("⚠️ Rate Limit Exceeded: You are creating audio too fast. Please wait 30-60 seconds before trying again.");
+         setShowQuotaModal(true); // Show the upgrade modal
+      } else if (errorMessage.includes("429")) {
+         setError("⚠️ Rate Limit: Please wait 30s before retrying.");
       } else if (errorMessage === "API_KEY_MISSING") {
         setIsConfigError(true);
         setError("Missing API Key. Configuration Required.");
@@ -244,6 +271,7 @@ export default function App() {
       setText(item.text);
       setLanguage(item.language as SupportedLanguage);
       setSelectedVoice(item.voice);
+      setSpeed(item.speed);
       setCurrentBuffer(item.audioBuffer);
       playAudio(item.audioBuffer);
     }
@@ -289,6 +317,47 @@ export default function App() {
          <div className="absolute top-[30%] right-[20%] w-[500px] h-[500px] bg-pink-600/10 rounded-full blur-[100px] animate-pulse" style={{ animationDelay: '4s' }}></div>
          <div className="absolute bottom-[20%] left-[20%] w-[400px] h-[400px] bg-blue-600/10 rounded-full blur-[80px]" style={{ animationDelay: '1s' }}></div>
       </div>
+
+      {/* Quota Exhaustion Modal */}
+      {showQuotaModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in">
+          <div className="bg-[#1a1b26] border border-pink-500/50 rounded-2xl max-w-md w-full p-6 shadow-2xl relative animate-scale-in">
+             <button onClick={() => setShowQuotaModal(false)} className="absolute top-4 right-4 text-gray-400 hover:text-white">
+                <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+             </button>
+             <div className="text-center mb-6">
+               <div className="w-16 h-16 bg-gradient-to-br from-pink-500 to-indigo-600 rounded-full flex items-center justify-center mx-auto mb-4 shadow-lg shadow-pink-500/30">
+                 <svg className="w-8 h-8 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+               </div>
+               <h2 className="text-xl font-bold text-white mb-2">Daily Quota Reached</h2>
+               <p className="text-sm text-gray-300">
+                 You have hit the daily limit for the Free Tier (approx 15 generations). 
+                 The "Unlimited" capability is restricted by your API Plan.
+               </p>
+             </div>
+             
+             <div className="space-y-3">
+               <a 
+                 href="https://aistudio.google.com/app/billing" 
+                 target="_blank" 
+                 rel="noreferrer"
+                 className="block w-full py-3 bg-white text-black font-bold text-center rounded-xl hover:bg-gray-200 transition-colors shadow-lg"
+               >
+                 Upgrade to Unlimited (Pay-as-you-go)
+               </a>
+               <button 
+                 onClick={() => setShowQuotaModal(false)}
+                 className="block w-full py-3 bg-white/5 text-gray-300 font-medium text-center rounded-xl hover:bg-white/10 transition-colors border border-white/5"
+               >
+                 Wait until tomorrow
+               </button>
+             </div>
+             <p className="mt-4 text-xs text-center text-gray-500">
+               Tip: Replaying audio from your "Recent Generations" list is free and unlimited!
+             </p>
+          </div>
+        </div>
+      )}
 
       <div className="max-w-[1400px] mx-auto grid grid-cols-1 lg:grid-cols-12 gap-6 relative z-10">
         
