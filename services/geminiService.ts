@@ -15,9 +15,17 @@ function getAI(): GoogleGenAI {
 }
 
 function checkApiKey() {
-  if (!process.env.API_KEY) {
-    throw new Error("API Key is missing. Please set the API_KEY environment variable in your Vercel/Netlify project settings.");
+  const key = process.env.API_KEY;
+  if (!key || key.length === 0 || key === 'undefined') {
+    const error = new Error("API_KEY_MISSING");
+    error.name = "ConfigError";
+    throw error;
   }
+}
+
+export function hasApiKey(): boolean {
+  const key = process.env.API_KEY;
+  return !!(key && key.length > 0 && key !== 'undefined');
 }
 
 // API Base Voice Names
@@ -123,6 +131,16 @@ const VOICE_CONFIG_MAP: Record<VoiceName, { apiVoice: string; style: string }> =
   [VoiceName.Char_Optimus]: { apiVoice: API_VOICES.CHARON, style: "Booming, metallic, noble, leader" },
   [VoiceName.Char_Sherlock]: { apiVoice: API_VOICES.PUCK, style: "Rapid fire, arrogant, british, deduction" },
   [VoiceName.Char_Potter]: { apiVoice: API_VOICES.PUCK, style: "British, young, brave, student" },
+  [VoiceName.Char_Wizard]: { apiVoice: API_VOICES.CHARON, style: "Ancient, raspy, wise wizard" },
+  [VoiceName.Char_Villain]: { apiVoice: API_VOICES.CHARON, style: "Dark, smooth, menacing villain" },
+  [VoiceName.Char_Hero]: { apiVoice: API_VOICES.FENRIR, style: "Breathless, gritty, intense action hero" },
+  [VoiceName.Char_Robot]: { apiVoice: API_VOICES.FENRIR, style: "Monotone, staccato, emotionless robot" },
+  [VoiceName.Char_Cyberpunk]: { apiVoice: API_VOICES.PUCK, style: "Cool, detached, edgy street-smart" },
+  [VoiceName.Char_OldMan]: { apiVoice: API_VOICES.FENRIR, style: "Shaky, cracked, very old man" },
+  [VoiceName.Char_OldWoman]: { apiVoice: API_VOICES.ZEPHYR, style: "Shaky, weak, very old woman" },
+  [VoiceName.Char_ChildLike]: { apiVoice: API_VOICES.PUCK, style: "High-pitched, energetic, innocent child" },
+  [VoiceName.Char_Pirate]: { apiVoice: API_VOICES.FENRIR, style: "Gravelly, slur, nautical slang, intense" },
+  [VoiceName.Char_Soldier]: { apiVoice: API_VOICES.FENRIR, style: "Barking orders, sharp, disciplined" },
 
   // --- Storytelling & Generic ---
   [VoiceName.Narrator_Deep]: { apiVoice: API_VOICES.CHARON, style: "Deep, epic, authoritative narrator" },
@@ -145,16 +163,6 @@ const VOICE_CONFIG_MAP: Record<VoiceName, { apiVoice: string; style: string }> =
   [VoiceName.Emotion_Whisper]: { apiVoice: API_VOICES.ZEPHYR, style: "Whispering, quiet, intimate, ASMR" },
   [VoiceName.Emotion_Nervous]: { apiVoice: API_VOICES.PUCK, style: "Fast, stuttering, shaky, nervous" },
   [VoiceName.Emotion_Sarcastic]: { apiVoice: API_VOICES.CHARON, style: "Deadpan, dry, biting sarcasm" },
-  [VoiceName.Char_Wizard]: { apiVoice: API_VOICES.CHARON, style: "Ancient, raspy, wise wizard" },
-  [VoiceName.Char_Villain]: { apiVoice: API_VOICES.CHARON, style: "Dark, smooth, menacing villain" },
-  [VoiceName.Char_Hero]: { apiVoice: API_VOICES.FENRIR, style: "Breathless, gritty, intense action hero" },
-  [VoiceName.Char_Robot]: { apiVoice: API_VOICES.FENRIR, style: "Monotone, staccato, emotionless robot" },
-  [VoiceName.Char_Cyberpunk]: { apiVoice: API_VOICES.PUCK, style: "Cool, detached, edgy street-smart" },
-  [VoiceName.Char_OldMan]: { apiVoice: API_VOICES.FENRIR, style: "Shaky, cracked, very old man" },
-  [VoiceName.Char_OldWoman]: { apiVoice: API_VOICES.ZEPHYR, style: "Shaky, weak, very old woman" },
-  [VoiceName.Char_ChildLike]: { apiVoice: API_VOICES.PUCK, style: "High-pitched, energetic, innocent child" },
-  [VoiceName.Char_Pirate]: { apiVoice: API_VOICES.FENRIR, style: "Gravelly, slur, nautical slang, intense" },
-  [VoiceName.Char_Soldier]: { apiVoice: API_VOICES.FENRIR, style: "Barking orders, sharp, disciplined" },
 
   // --- Base Voices ---
   [VoiceName.Base_Fenrir]: { apiVoice: API_VOICES.FENRIR, style: "Deep, intense, generic male" },

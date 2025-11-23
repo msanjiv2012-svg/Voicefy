@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { AVAILABLE_VOICES, SAMPLE_TEXTS } from './constants';
 import { VoiceName, SupportedLanguage, HistoryItem } from './types';
-import { generateSpeech, refineTextWithAI, translateText } from './services/geminiService';
+import { generateSpeech, refineTextWithAI, translateText, hasApiKey } from './services/geminiService';
 import { bufferToWav, audioBufferToBlob } from './services/audioUtils';
 import VoiceSelector from './components/VoiceSelector';
 import Visualizer from './components/Visualizer';
@@ -24,6 +24,7 @@ export default function App() {
   const [isTranslating, setIsTranslating] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [isConfigError, setIsConfigError] = useState(false);
   const [history, setHistory] = useState<HistoryItem[]>([]);
   const [currentBuffer, setCurrentBuffer] = useState<AudioBuffer | null>(null);
 
@@ -32,6 +33,13 @@ export default function App() {
   const sourceNodeRef = useRef<AudioBufferSourceNode | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
   const [analyser, setAnalyser] = useState<AnalyserNode | null>(null);
+
+  // Check API Key on mount
+  useEffect(() => {
+    if (!hasApiKey()) {
+      setIsConfigError(true);
+    }
+  }, []);
 
   // Initialize Audio Context
   useEffect(() => {
@@ -76,8 +84,13 @@ export default function App() {
     try {
       const translated = await translateText(currentText, lang);
       setText(translated);
-    } catch (e) {
-      console.error("Translation error:", e);
+    } catch (e: any) {
+      if (e.message === "API_KEY_MISSING") {
+         setIsConfigError(true);
+         setError("API Key Missing");
+      } else {
+         console.error("Translation error:", e);
+      }
     } finally {
       setIsTranslating(false);
     }
@@ -91,8 +104,13 @@ export default function App() {
       const refined = await refineTextWithAI(text, selectedVoice);
       setText(refined);
     } catch (e: any) {
-      console.error(e);
-      setError("Failed to enhance text. " + (e.message || ""));
+      if (e.message === "API_KEY_MISSING") {
+        setIsConfigError(true);
+        setError("API Key Missing");
+      } else {
+        console.error(e);
+        setError("Failed to enhance text. " + (e.message || ""));
+      }
     } finally {
       setIsRefining(false);
     }
@@ -138,8 +156,14 @@ export default function App() {
       return;
     }
 
+    if (!hasApiKey()) {
+      setIsConfigError(true);
+      return;
+    }
+
     setIsLoading(true);
     setError(null);
+    setIsConfigError(false);
     stopAudio();
     setCurrentBuffer(null);
 
@@ -177,8 +201,12 @@ export default function App() {
     } catch (err: any) {
       console.error("Generation failed:", err);
       // Show a user-friendly error
-      if (err.message?.includes("API Key")) {
-        setError("Missing API Key. Please check your deployment settings.");
+      if (err.message === "API_KEY_MISSING") {
+        setIsConfigError(true);
+        setError("Missing API Key. Configuration Required.");
+      } else if (err.message?.includes("API Key")) {
+        setIsConfigError(true);
+        setError("Invalid API Key. Please check your quota or key.");
       } else {
         setError(err.message || "An unexpected error occurred. Please try again.");
       }
@@ -279,8 +307,40 @@ export default function App() {
              </div>
           </div>
 
-          {/* Error Display */}
-          {error && (
+          {/* Configuration Error Message */}
+          {isConfigError && (
+            <div className="bg-red-900/40 border border-red-500 rounded-2xl p-6 animate-scale-in shadow-2xl">
+               <div className="flex items-start gap-4">
+                  <div className="w-12 h-12 bg-red-500/20 rounded-full flex items-center justify-center flex-shrink-0">
+                     <svg className="w-6 h-6 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" /></svg>
+                  </div>
+                  <div>
+                     <h3 className="text-lg font-bold text-white mb-2">Setup Required: Missing API Key</h3>
+                     <p className="text-sm text-gray-300 mb-4">
+                        To use this app, you need to provide a Google Gemini API Key. 
+                        The app cannot function without it.
+                     </p>
+                     <div className="bg-black/40 rounded-lg p-4 text-xs font-mono text-gray-400 border border-white/5">
+                        <p className="mb-2 font-bold text-white">How to fix it:</p>
+                        <ol className="list-decimal ml-4 space-y-2">
+                           <li>Get a key from <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noreferrer" className="text-blue-400 hover:underline">Google AI Studio</a>.</li>
+                           <li>
+                              <span className="text-yellow-400">Running Locally?</span> Create a <code className="bg-white/10 px-1 rounded">.env</code> file in the root folder and add:
+                              <br/><span className="text-green-400">API_KEY=your_key_here</span>
+                           </li>
+                           <li>
+                              <span className="text-pink-400">Deployed on Vercel?</span> Go to Project Settings → Environment Variables and add <code className="bg-white/10 px-1 rounded">API_KEY</code>.
+                           </li>
+                        </ol>
+                     </div>
+                     <button onClick={() => setIsConfigError(false)} className="mt-4 text-sm text-white/60 hover:text-white underline">Dismiss</button>
+                  </div>
+               </div>
+            </div>
+          )}
+
+          {/* General Error Display */}
+          {error && !isConfigError && (
              <div className="bg-red-500/10 border border-red-500/50 rounded-xl p-4 flex items-start space-x-3 animate-fade-in">
                 <svg className="w-5 h-5 text-red-400 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
                 <div className="text-sm text-red-200">
@@ -486,6 +546,13 @@ export default function App() {
                    </div>
                 )}
               </div>
+           </div>
+        </div>
+
+        {/* Creator Tag */}
+        <div className="absolute top-0 right-0 p-4 hidden lg:block">
+           <div className="text-[10px] text-gray-500 font-mono bg-black/20 px-3 py-1 rounded-full border border-white/5 hover:border-white/10 transition-colors">
+              Created by M.Sanjiv
            </div>
         </div>
 
