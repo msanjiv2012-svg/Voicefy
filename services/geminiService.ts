@@ -8,13 +8,16 @@ let ai: GoogleGenAI | null = null;
 function getAI(): GoogleGenAI {
   if (!ai) {
     const apiKey = process.env.API_KEY;
-    if (!apiKey) {
-      console.warn("API Key is missing in environment variables. Calls will fail.");
-    }
     // Initialize with provided key or empty string to prevent constructor crash
     ai = new GoogleGenAI({ apiKey: apiKey || '' });
   }
   return ai;
+}
+
+function checkApiKey() {
+  if (!process.env.API_KEY) {
+    throw new Error("API Key is missing. Please set the API_KEY environment variable in your Vercel/Netlify project settings.");
+  }
 }
 
 // API Base Voice Names
@@ -196,6 +199,8 @@ export async function generateSpeech(
   speed: number = 1.0,
   highQuality: boolean = true
 ): Promise<AudioBuffer> {
+  checkApiKey();
+  
   const client = getAI();
   const config = VOICE_CONFIG_MAP[voiceName];
   const voiceConfig = config || { apiVoice: API_VOICES.PUCK, style: 'Neutral' };
@@ -231,6 +236,7 @@ export async function generateSpeech(
 }
 
 export async function refineTextWithAI(text: string, voiceName: VoiceName): Promise<string> {
+  checkApiKey();
   const client = getAI();
   const config = VOICE_CONFIG_MAP[voiceName];
   const style = config ? config.style : "Clear and professional";
@@ -244,6 +250,7 @@ export async function refineTextWithAI(text: string, voiceName: VoiceName): Prom
 }
 
 export async function translateText(text: string, targetLanguage: SupportedLanguage): Promise<string> {
+  checkApiKey();
   const client = getAI();
   const response = await client.models.generateContent({
     model: 'gemini-2.5-flash',

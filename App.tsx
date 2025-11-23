@@ -86,11 +86,13 @@ export default function App() {
   const handleRefineText = async () => {
     if (!text.trim()) return;
     setIsRefining(true);
+    setError(null);
     try {
       const refined = await refineTextWithAI(text, selectedVoice);
       setText(refined);
-    } catch (e) {
+    } catch (e: any) {
       console.error(e);
+      setError("Failed to enhance text. " + (e.message || ""));
     } finally {
       setIsRefining(false);
     }
@@ -173,8 +175,13 @@ export default function App() {
       playAudio(audioBuffer);
 
     } catch (err: any) {
-      console.error(err);
-      setError(err.message || "An unexpected error occurred.");
+      console.error("Generation failed:", err);
+      // Show a user-friendly error
+      if (err.message?.includes("API Key")) {
+        setError("Missing API Key. Please check your deployment settings.");
+      } else {
+        setError(err.message || "An unexpected error occurred. Please try again.");
+      }
     } finally {
       setIsLoading(false);
     }
@@ -200,11 +207,7 @@ export default function App() {
       } else {
         // MP4 / MP3 (Compressed)
         blob = await audioBufferToBlob(buffer, 'mp4');
-        // If the browser only supported webm, the util returns webm. 
-        // We can check blob.type but renaming to mp4 usually works for players
         if (blob.type.includes('webm')) {
-            // Some users prefer .webm, but .mp4 is more requested. 
-            // We'll trust the user selected mp4.
             extension = 'mp4'; 
         }
       }
@@ -228,10 +231,7 @@ export default function App() {
       
       {/* Dynamic Colorful Background */}
       <div className="fixed inset-0 -z-10 pointer-events-none overflow-hidden">
-         {/* Base dark gradient */}
          <div className="absolute inset-0 bg-gradient-to-br from-slate-900 via-indigo-950 to-slate-900"></div>
-         
-         {/* Animated Blobs */}
          <div className="absolute top-[-20%] left-[-10%] w-[800px] h-[800px] bg-purple-600/20 rounded-full blur-[120px] animate-pulse-slow"></div>
          <div className="absolute bottom-[-10%] right-[-10%] w-[700px] h-[700px] bg-indigo-600/20 rounded-full blur-[120px]" style={{ animationDelay: '2s' }}></div>
          <div className="absolute top-[30%] right-[20%] w-[500px] h-[500px] bg-pink-600/10 rounded-full blur-[100px] animate-pulse" style={{ animationDelay: '4s' }}></div>
@@ -278,6 +278,20 @@ export default function App() {
                 </button>
              </div>
           </div>
+
+          {/* Error Display */}
+          {error && (
+             <div className="bg-red-500/10 border border-red-500/50 rounded-xl p-4 flex items-start space-x-3 animate-fade-in">
+                <svg className="w-5 h-5 text-red-400 mt-0.5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /></svg>
+                <div className="text-sm text-red-200">
+                   <span className="font-bold block mb-1">Error</span>
+                   {error}
+                </div>
+                <button onClick={() => setError(null)} className="text-red-400 hover:text-white ml-auto">
+                   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                </button>
+             </div>
+          )}
 
           {/* Editor Card */}
           <div className="bg-[#131316]/80 backdrop-blur-xl border border-white/10 rounded-3xl p-1 shadow-2xl relative group">
