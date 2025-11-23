@@ -1,0 +1,5 @@
+{
+  "name": "Voicefy - Text to Speech",
+  "description": "A modern, high-fidelity text-to-speech converter using Gemini 2.5. Supports English and Tamil with multiple voice personas.",
+  "requestFramePermissions": []
+}
