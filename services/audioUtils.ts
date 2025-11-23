@@ -1,3 +1,4 @@
+
 /**
  * Decodes a base64 string into a Uint8Array.
  * @param base64 The base64 encoded string.
@@ -41,6 +42,18 @@ export async function decodeAudioData(
     }
   }
   return buffer;
+}
+
+/**
+ * Converts a Blob to an AudioBuffer
+ */
+export async function blobToAudioBuffer(blob: Blob, ctx: AudioContext): Promise<AudioBuffer> {
+  const arrayBuffer = await blob.arrayBuffer();
+  // We cannot use decodeAudioData for raw PCM blobs easily unless they have headers (WAV).
+  // If we stored WAV blobs, this works. 
+  // If we stored raw PCM blobs, we need to know the format.
+  // Our app uses bufferToWav to create Blobs, so they are valid WAVs.
+  return await ctx.decodeAudioData(arrayBuffer);
 }
 
 /**
@@ -104,26 +117,9 @@ function writeString(view: DataView, offset: number, string: string) {
 
 /**
  * Converts AudioBuffer to MP4/WebM Blob using MediaRecorder.
- * Note: Browser support for 'audio/mp4' varies (common in Safari). 
- * Chrome usually defaults to 'audio/webm' which can be renamed to .mp4 or .weba
  */
 export async function audioBufferToBlob(buffer: AudioBuffer, format: 'mp4' | 'webm' = 'mp4'): Promise<Blob> {
   return new Promise((resolve, reject) => {
-    // 1. Create an offline context to render the audio into a MediaStream
-    const offlineCtx = new OfflineAudioContext(buffer.numberOfChannels, buffer.length, buffer.sampleRate);
-    const source = offlineCtx.createBufferSource();
-    source.buffer = buffer;
-    
-    // We need to connect to a MediaStreamDestination, but OfflineCtx doesn't support that directly in all browsers easily
-    // Alternative: Play it in real-time (silent) or use a workaround.
-    // Better approach for CLIENT SIDE encoding without external libs:
-    // Use the Wav Blob (PCM) which is already high quality.
-    // OR create a standard AudioContext, play it into a destination, and record it. 
-    // This is faster than real-time if we use OfflineContext? No, OfflineContext produces an AudioBuffer.
-    
-    // To record to a compressed format (MP4/WebM), we MUST use MediaRecorder which requires a Stream.
-    // We can use a Web Audio API MediaStreamAudioDestinationNode.
-    
     const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
     const dest = ctx.createMediaStreamDestination();
     const rtSource = ctx.createBufferSource();
@@ -152,7 +148,6 @@ export async function audioBufferToBlob(buffer: AudioBuffer, format: 'mp4' | 'we
     rtSource.start(0);
     recorder.start();
     
-    // Stop recording when playback ends
     rtSource.onended = () => {
       recorder.stop();
     };
