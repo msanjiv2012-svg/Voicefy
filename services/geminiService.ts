@@ -2,7 +2,20 @@ import { GoogleGenAI, Modality } from "@google/genai";
 import { VoiceName, SupportedLanguage } from "../types";
 import { decodeBase64, decodeAudioData } from "./audioUtils";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Helper to get the AI client instance lazily
+let ai: GoogleGenAI | null = null;
+
+function getAI(): GoogleGenAI {
+  if (!ai) {
+    const apiKey = process.env.API_KEY;
+    if (!apiKey) {
+      console.warn("API Key is missing in environment variables. Calls will fail.");
+    }
+    // Initialize with provided key or empty string to prevent constructor crash
+    ai = new GoogleGenAI({ apiKey: apiKey || '' });
+  }
+  return ai;
+}
 
 // API Base Voice Names
 const API_VOICES = {
@@ -183,6 +196,7 @@ export async function generateSpeech(
   speed: number = 1.0,
   highQuality: boolean = true
 ): Promise<AudioBuffer> {
+  const client = getAI();
   const config = VOICE_CONFIG_MAP[voiceName];
   const voiceConfig = config || { apiVoice: API_VOICES.PUCK, style: 'Neutral' };
 
@@ -193,10 +207,7 @@ export async function generateSpeech(
     Language: ${language}
   `;
 
-  // Speed is not natively supported in speechConfig yet as a number, but we can instruct the model in prompt if needed,
-  // or rely on AudioContext playbackRate which is implemented in App.tsx.
-
-  const response = await ai.models.generateContent({
+  const response = await client.models.generateContent({
     model: 'gemini-2.5-flash-preview-tts',
     contents: [{ parts: [{ text: promptText }] }],
     config: {
@@ -212,7 +223,7 @@ export async function generateSpeech(
   const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
 
   if (!base64Audio) {
-    throw new Error("No audio generated from Gemini.");
+    throw new Error("No audio generated from Gemini. Check your API Key and quota.");
   }
 
   const audioBytes = decodeBase64(base64Audio);
@@ -220,10 +231,11 @@ export async function generateSpeech(
 }
 
 export async function refineTextWithAI(text: string, voiceName: VoiceName): Promise<string> {
+  const client = getAI();
   const config = VOICE_CONFIG_MAP[voiceName];
   const style = config ? config.style : "Clear and professional";
   
-  const response = await ai.models.generateContent({
+  const response = await client.models.generateContent({
     model: 'gemini-2.5-flash',
     contents: `Rewrite the following text to match this style description: "${style}". Keep the meaning the same but enhance the tone. Text: "${text}"`,
   });
@@ -232,7 +244,8 @@ export async function refineTextWithAI(text: string, voiceName: VoiceName): Prom
 }
 
 export async function translateText(text: string, targetLanguage: SupportedLanguage): Promise<string> {
-  const response = await ai.models.generateContent({
+  const client = getAI();
+  const response = await client.models.generateContent({
     model: 'gemini-2.5-flash',
     contents: `Translate the following text to ${targetLanguage}. Return only the translated text. Text: "${text}"`,
   });
